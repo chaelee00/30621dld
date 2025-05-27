@@ -1,64 +1,49 @@
 import streamlit as st
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from sklearn.cluster import KMeans
-import folium
-from streamlit_folium import st_folium
-
-st.title("📍 배송 위치 자동 군집 분석 (Folium 지도 시각화)")
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # 데이터 불러오기
 @st.cache_data
 def load_data():
     return pd.read_csv("Delivery.csv")
 
+st.title("🚚 배달 데이터 군집 분석 웹앱")
 df = load_data()
-st.subheader("📄 데이터 미리보기")
-st.dataframe(df)
+st.write("🔍 데이터 미리보기", df.head())
 
-# 위치 컬럼 지정
-lat_col = "Latitude"
-lon_col = "Longitude"
+# 사용자 선택: 군집에 사용할 컬럼
+features = st.multiselect("군집 분석에 사용할 컬럼을 선택하세요", df.select_dtypes(include=['float64', 'int64']).columns)
 
-if lat_col not in df.columns or lon_col not in df.columns:
-    st.error("위치 정보가 누락되었습니다 (Latitude / Longitude 필요).")
-    st.stop()
+if len(features) >= 2:
+    X = df[features].dropna()
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
 
-# 군집 수 조절
-st.sidebar.header("⚙️ 군집 분석 설정")
-n_clusters = st.sidebar.slider("군집 수 (K)", min_value=2, max_value=10, value=3)
+    # 군집 수 선택
+    n_clusters = st.slider("군집 수 (KMeans)", 2, 10, 3)
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    labels = kmeans.fit_predict(X_scaled)
 
-# 데이터 전처리
-X = df[[lat_col, lon_col]].dropna()
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+    # PCA로 2D 변환
+    pca = PCA(n_components=2)
+    X_pca = pca.fit_transform(X_scaled)
 
-# 군집 분석
-kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-labels = kmeans.fit_predict(X_scaled)
-X_result = df.loc[X.index].copy()
-X_result["Cluster"] = labels
+    # 시각화
+    pca_df = pd.DataFrame(X_pca, columns=["PC1", "PC2"])
+    pca_df["Cluster"] = labels
 
-# 중심 위치
-center_lat = X_result[lat_col].mean()
-center_lon = X_result[lon_col].mean()
+    st.subheader("🎯 2D 군집 결과")
+    fig, ax = plt.subplots()
+    sns.scatterplot(data=pca_df, x="PC1", y="PC2", hue="Cluster", palette="Set2", ax=ax)
+    st.pyplot(fig)
 
-# Folium 지도 생성
-m = folium.Map(location=[center_lat, center_lon], zoom_start=11)
-colors = [
-    "red", "blue", "green", "purple", "orange", "darkred", 
-    "lightblue", "pink", "gray", "cadetblue"
-]
-
-for _, row in X_result.iterrows():
-    folium.CircleMarker(
-        location=[row[lat_col], row[lon_col]],
-        radius=5,
-        color=colors[int(row["Cluster"]) % len(colors)],
-        fill=True,
-        fill_opacity=0.7,
-        popup=f"Cluster {row['Cluster']}"
-    ).add_to(m)
-
-st.subheader("🌍 군집 결과 지도")
-st_folium(m, width=700, height=500)
+    # 군집별 평균 정보
+    df["Cluster"] = labels
+    st.subheader("📈 군집별 평균 값")
+    st.write(df.groupby("Cluster")[features].mean())
+else:
+    st.warning("2개 이상의 수치형 컬럼을 선택해주세요.")
